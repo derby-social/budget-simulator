@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulateur de coûts infra — Derby</title>
+<style>
+.sim-page { font-family: system-ui, -apple-system, sans-serif; color: #111; background: #fff; max-width: 1320px; margin: 0 auto; padding: 22px 28px 18px; }
+.sim-title { font-size: 17px; font-weight: 600; margin: 0 0 16px; letter-spacing: -0.01em; }
+.sim-note { font-size: 11px; color: #999; margin-top: 0.85rem; }
+
+.layout { display: grid; grid-template-columns: minmax(300px, 360px) 1fr; gap: 18px; align-items: start; }
+@media (max-width: 880px) { .layout { grid-template-columns: 1fr; } }
+.col-left, .col-right { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.panel { background: #fff; border: 0.5px solid #eaeaea; border-radius: 10px; padding: 14px 16px; }
+.panel-title { font-size: 12px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+
+.field { margin-bottom: 12px; }
+.field:last-child { margin-bottom: 0; }
+.field-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; gap: 8px; }
+.field-head label { font-size: 12.5px; color: #555; }
+.field-head .val { font-size: 12.5px; font-weight: 600; color: #111; white-space: nowrap; }
+.field input[type=range] { width: 100%; display: block; accent-color: #0027FA; height: 4px; cursor: pointer; }
+
+.field-label { display: block; font-size: 12.5px; color: #555; margin-bottom: 4px; }
+.input-wrap { position: relative; }
+.num-input { width: 100%; box-sizing: border-box; padding: 7px 10px; font-size: 13px; font-weight: 500; color: #111; background: #fff; border: 1px solid #dcdcdc; border-radius: 6px; transition: border-color .15s, background-color .15s; }
+.num-input.has-suffix { padding-right: 28px; }
+.num-input:focus { outline: none; border-color: #0027FA; }
+.num-input.invalid { border-color: #D42B2B; background: #FFF5F5; color: #B91C1C; }
+.num-input.invalid:focus { border-color: #D42B2B; }
+.input-wrap .suffix { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 12px; color: #888; pointer-events: none; }
+.field-msg { font-size: 10.5px; color: #D42B2B; margin-top: 3px; min-height: 13px; }
+
+.validation-banner { display: none; background: #FFF5F5; border: 1px solid #F3B4B4; color: #B91C1C; font-size: 12.5px; padding: 9px 14px; border-radius: 8px; margin-bottom: 14px; }
+.validation-banner.show { display: block; }
+.col-right.blocked { opacity: 0.4; filter: grayscale(35%); pointer-events: none; transition: opacity .15s; }
+
+.cost-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cost-card { background: #f9f9fa; border-radius: 10px; padding: 12px 14px; border: 1px solid #eaeaea; }
+.cost-card .name { font-size: 10px; color: #888; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+.cost-card .amount { font-size: 19px; font-weight: 600; color: #111; }
+.cost-card .sub { font-size: 10.5px; color: #666; margin-top: 2px; line-height: 1.3; }
+.cost-card.highlight { background: rgba(0, 39, 250, 0.04); border-color: #0027FA; }
+
+/* Barre de position MAU : purement décorative (pas un second curseur — voir #tier-fill). */
+.tier-bar { height: 4px; border-radius: 2px; background: #eaeaea; margin: 8px 0 6px; position: relative; overflow: hidden; }
+.tier-fill { position: absolute; top: 0; left: 0; height: 100%; background: #0027FA; opacity: 0.35; border-radius: 2px; transition: width 0.1s; }
+.tier-labels { display: flex; justify-content: space-between; font-size: 10.5px; color: #999; }
+
+.breakdown-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 5px 0; border-bottom: 0.5px solid #f0f0f0; font-size: 12.5px; }
+.breakdown-row:last-child { border-bottom: none; border-top: 1px solid #eaeaea; font-weight: 600; font-size: 13.5px; margin-top: 3px; padding-top: 9px; }
+.breakdown-row .label { color: #555; display: flex; align-items: baseline; gap: 6px; min-width: 0; white-space: nowrap; }
+.breakdown-row .label .sub-txt { color: #999; font-size: 10.5px; }
+.breakdown-row .value { color: #111; font-weight: 600; white-space: nowrap; }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div class="sim-page">
+  <h1 class="sim-title">Simulateur de coûts d'infrastructure — Derby</h1>
+  <div class="validation-banner" id="validation-banner">⚠️ Corrigez la ou les valeurs en rouge dans "Contenu &amp; rétention" pour remettre à jour le simulateur.</div>
+
+  <div class="layout">
+    <div class="col-left">
+      <div class="panel">
+        <div class="panel-title">Trafic global</div>
+        <div class="field">
+          <div class="field-head"><label>Utilisateurs actifs mensuels</label><span class="val" id="mau-display">5 000</span></div>
+          <input type="range" id="mau-slider" min="500" max="100000" step="500" value="5000">
+        </div>
+        <div class="tier-bar"><div class="tier-fill" id="tier-fill"></div></div>
+        <div class="tier-labels"><span>500</span><span>10K</span><span>25K</span><span>50K</span><span>100K</span></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Contenu & rétention</div>
+        <div class="field">
+          <label class="field-label" for="months-input">Mois depuis le lancement</label>
+          <input type="number" id="months-input" class="num-input" min="1" max="24" step="1" value="6" inputmode="numeric">
+          <div class="field-msg" id="months-msg"></div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="posts-input">Posts/mois par utilisateur</label>
+          <input type="number" id="posts-input" class="num-input" min="0.5" max="6" step="0.5" value="2" inputmode="decimal">
+          <div class="field-msg" id="posts-msg"></div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="pct-image-input">% de posts avec image</label>
+          <div class="input-wrap">
+            <input type="number" id="pct-image-input" class="num-input has-suffix" min="0" max="100" step="1" value="40" inputmode="numeric">
+            <span class="suffix">%</span>
+          </div>
+          <div class="field-msg" id="pct-image-msg"></div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="images-per-post-input">Images par post (si image)</label>
+          <input type="number" id="images-per-post-input" class="num-input" min="1" max="5" step="1" value="2" inputmode="numeric">
+          <div class="field-msg" id="images-per-post-msg"></div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="permanent-input">% au contenu permanent</label>
+          <div class="input-wrap">
+            <input type="number" id="permanent-input" class="num-input has-suffix" min="0" max="30" step="0.5" value="3" inputmode="decimal">
+            <span class="suffix">%</span>
+          </div>
+          <div class="field-msg" id="permanent-msg"></div>
+        </div>
+      </div>
+
+      <div class="cost-grid" id="summary-cards"></div>
+    </div>
+
+    <div class="col-right" id="col-right">
+      <div class="panel">
+        <div class="panel-title">Coût infra total selon l'échelle (MAU)</div>
+        <div style="position: relative; height: 180px;">
+          <canvas id="cost-chart"></canvas>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Détail des coûts (mensuel récurrent)</div>
+        <div id="breakdown"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sim-note" id="pricing-note"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+// TARIFS PUBLICS — à mettre à jour ici quand les fournisseurs changent leurs
+// prix. Chaque constante porte sa source. Ce simulateur ne projette QUE des
+// coûts d'infrastructure à l'échelle, à partir de tarifs publics réels :
+// pas de coûts d'équipe, pas de suivi de dépenses passées, pas de revenus.
+// ═══════════════════════════════════════════════════════════════════════
+
+const PRICING_CHECKED_ON = '2026-09-07';
+
+// Taux de change pour les tarifs facturés en USD (R2, Google Play) — approximatif,
+// à ajuster à la date de mise à jour des prix.
+const USD_TO_EUR = 0.92;
+
+// ─── Hébergement : Hetzner Cloud — architecture manager/worker ────────────
+// Setup réel (confirmé par vous, sept. 2026) : un orchestrateur léger (Docker
+// Swarm / K3s / Dokploy) + un worker qui fait tourner les stacks (Derby dans
+// tous ses environnements, potentiellement d'autres projets). En cas de panne
+// du worker, un nouveau VPS est raccroché à l'orchestrateur et la stack se
+// replanifie dessus automatiquement (en théorie).
+//
+// Orchestrateur : CX23 (2 vCPU/4 Go) — coût FIXE, ne scale PAS avec le MAU,
+// cette machine ne fait que coordonner, pas tourner la stack.
+// Source (officielle) : https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/
+const HETZNER_ORCHESTRATOR_COST = 5.49;
+
+// Worker : ligne CAX (ARM Ampere) retenue par vous — même puissance que la
+// ligne CPX (x86) pour environ 1/3 du prix. .NET et Postgres tournent tous
+// les deux nativement en arm64 ; à valider quand même sur le reste de la
+// stack avant de migrer pour de vrai.
+// ⚠️ Hetzner n'affiche ses prix mensuels que via un calculateur JS illisible
+// depuis ici. Ces montants sont calculés à partir des tarifs horaires réels
+// de l'API Hetzner (récupérés via sparecores.com, qui suit l'API Hetzner en
+// direct, en USD), recalés avec le ratio observé sur CX23 (le prix officiel
+// mensuel ≈ 85% du calcul naïf heures×tarif horaire — probablement une remise
+// d'engagement mensuel). CE SONT DES ESTIMATIONS — à reconfirmer sur
+// https://www.hetzner.com/cloud/ avant de s'engager. Le suffixe "· estimé"
+// est ajouté automatiquement dans l'UI (voir renderBreakdown), pas la peine
+// de le répéter dans les labels ci-dessous.
+const HETZNER_WORKER = [
+  { max: 2000,   cost: 7,  label: 'CAX11 · 2 vCPU/4 Go' },
+  { max: 10000,  cost: 11, label: 'CAX21 · 4 vCPU/8 Go' },
+  { max: 30000,  cost: 22, label: 'CAX31 · 8 vCPU/16 Go (actuel)' },
+  { max: 60000,  cost: 44, label: 'CAX41 · 16 vCPU/31 Go' },
+  { max: 100001, cost: 88, label: '2× CAX41 (hypothèse)' },
+];
+
+// Hetzner Cloud Backup addon = +20% du prix du serveur (snapshots automatiques,
+// 7 rétentions glissantes). Source : hetzner.com/cloud (page tarifs).
+const HETZNER_BACKUP_ADDON_RATIO = 0.20;
+// Aucun système de backup confirmé dans le code actuel — le docker-compose de
+// prod a un "# TODO Think about persisting data in production" sur le volume
+// Postgres. Passez à true le jour où un vrai backup est mis en place.
+const BACKUP_ENABLED = false;
+
+// ─── Stockage objet : Cloudflare R2 (S3-compatible) ───────────────────────
+// Confirmé par S3Storage__AccountId/AccessKey/SecretKey (pattern "Account ID"
+// propre à R2, absent de l'API AWS S3 classique).
+// Source: https://developers.cloudflare.com/r2/pricing/ — facturé en USD.
+const R2_STORAGE_PER_GB_USD = 0.015; // classe Standard
+const R2_STORAGE_PER_GB = R2_STORAGE_PER_GB_USD * USD_TO_EUR;
+// Franchise gratuite R2 (classe Standard uniquement) : 10 Go-mois de stockage.
+// Non déduite ici par simplicité — la simulation est donc légèrement pessimiste
+// sous ce seuil. R2 ne facture pas l'egress (contrairement à S3), donc aucun
+// poste "bande passante sortante" n'est nécessaire ici.
+// Remarque : la classe "Infrequent Access" (0,01 $/Go-mois) existe mais n'est
+// utilisée par aucun mécanisme confirmé dans le code (pas de politique de
+// cold storage) — elle n'est donc pas modélisée. À réintroduire si un jour
+// le contenu ancien des utilisateurs "au contenu permanent" est déplacé vers
+// cette classe pour réduire les coûts.
+
+// ─── CDN : Cloudflare ──────────────────────────────────────────────────────
+// Plan actuel confirmé par l'utilisateur : Free (0€), cohérent avec les
+// mentions légales ("Cloudflare en CDN", aucune mention de plan payant).
+const CLOUDFLARE_COST = 0;
+// Si vous passez un jour à un plan payant, tarifs de référence (à revérifier
+// sur https://www.cloudflare.com/plans/ au moment venu) :
+//   Pro ≈ 20-25 $/mois par zone · Business ≈ 200 $/mois par zone
+
+// ─── Cartographie & géocodage — Mapbox retiré ──────────────────────────────
+// Mapbox a été retiré du produit (voir app_v2/docs/migration/08-map-native-migration.md,
+// ticket #28) et remplacé par :
+//  - react-native-maps : Apple Maps natif (iOS) + Google Maps SDK natif (Android)
+//    pour l'affichage carte
+//  - l'API Géoplateforme/IGN (data.geopf.fr) pour la recherche d'adresse / géocodage
+//    (voir server/Derby.Infrastructure/Adapters/FrenchGeocodingService.cs)
+//
+// Cartographie mobile native : gratuite et ILLIMITÉE pour l'usage mobile, à toute
+// échelle. Source : https://developers.google.com/maps/documentation/android-sdk/usage-and-billing
+// ("All mobile usage of the Maps SDK for Android is unlimited [...] free from
+// per-load charges"). Apple Maps (MapKit natif iOS) ne nécessite ni clé ni
+// facturation. Un projet Google Cloud avec facturation activée reste nécessaire
+// pour obtenir la clé API Android (contrainte opérationnelle, pas un coût).
+const MOBILE_MAPS_COST = 0;
+// Géocodage FR (Géoplateforme/IGN) : gratuit, sans clé, aucun palier payant.
+// La limite de 50 req/s/IP documentée dans FrenchGeocodingService.cs est une
+// limite de DÉBIT opérationnelle, pas un plafond d'usage facturable — ce poste
+// reste donc à 0€ à toute échelle simulée ici.
+const GEOCODING_COST = 0;
+
+// ─── Modération de contenu : OpenAI Moderation API ─────────────────────────
+// Modèle omni-moderation-latest — gratuit, ne compte pas dans les quotas d'API.
+// Source: https://platform.openai.com/docs/models/omni-moderation-latest
+const MODERATION_COST = 0;
+
+// ─── Comptes plateforme — coûts fixes, indépendants de l'échelle ──────────
+// Apple Developer Program (France). Source: https://developer.apple.com/programs/enroll/
+const APPLE_DEVELOPER_EUR_PER_YEAR = 99;
+// Compte développeur Google Play : frais unique de 25 $ à l'inscription, non récurrent.
+// Jugé négligeable par l'équipe (à titre indicatif, ~23 €, payé une seule fois) — volontairement
+// exclu du simulateur. Source si besoin de le réintroduire un jour :
+// https://support.google.com/googleplay/android-developer
+// Nom de domaine derbyapp.fr — registrar OVH, tarif de RENOUVELLEMENT (le prix
+// de 1ère année est promotionnel et ne reflète pas le coût récurrent réel).
+// Source: https://www.ovhcloud.com/fr/domains/ (prix HT)
+const DOMAIN_EUR_HT_PER_YEAR = 7.79;
+
+// ─── Hypothèses de volumétrie (PAS des tarifs — tailles moyennes à ajuster
+// si besoin, indépendantes des prix fournisseurs ci-dessus) ────────────────
+const PHOTO_PROFILE_KB = 150;
+const PHOTO_POST_KB = 280;
+const DB_BASE_KB = 50;
+const DB_GROWTH_KB = 5;
+
+let costChart = null;
+
+function fmt(n, dec=2) { return n.toFixed(dec).replace('.', ','); }
+function fmtEur(n) { return (n < 1 ? fmt(n) : Math.round(n).toLocaleString('fr-FR')) + ' €'; }
+
+function calcModel(mau, postsPerMonth, appAgeMonths, permanentRatioPct, pctPostsWithImage, imagesPerPost) {
+  const permanentRatio = permanentRatioPct / 100;
+  const avgImagesPerPost = (pctPostsWithImage / 100) * imagesPerPost;
+
+  // ── Stockage ──
+  const storageProfileGB = (mau * PHOTO_PROFILE_KB) / (1024 * 1024);
+  const storageDbGB = (mau * (DB_BASE_KB + DB_GROWTH_KB * appAgeMonths)) / (1024 * 1024);
+  const monthlyPostVolPerUserGB = (postsPerMonth * avgImagesPerPost * PHOTO_POST_KB) / (1024 * 1024);
+
+  const permanentUsers = Math.round(mau * permanentRatio);
+  const freemiumUsers = mau - permanentUsers;
+
+  // Règle produit : les posts (et leurs images) des utilisateurs freemium sont
+  // supprimés automatiquement au bout d'un mois → fenêtre glissante de 30 jours,
+  // jamais une accumulation infinie. Les utilisateurs au contenu permanent,
+  // eux, accumulent leurs posts sans expiration.
+  const freemiumPostsGB = freemiumUsers * monthlyPostVolPerUserGB * Math.min(appAgeMonths, 1);
+  const permanentPostsGB = permanentUsers * monthlyPostVolPerUserGB * appAgeMonths;
+  const storagePostsGB = freemiumPostsGB + permanentPostsGB;
+
+  const totalStorageGB = storageProfileGB + storagePostsGB + storageDbGB;
+
+  // ── Coûts ──
+  const r2Cost = totalStorageGB * R2_STORAGE_PER_GB;
+  const workerTier = HETZNER_WORKER.find(h => mau <= h.max) || HETZNER_WORKER[HETZNER_WORKER.length - 1];
+  const hetznerWorkerCost = workerTier.cost;
+  const hetznerWorkerLabel = workerTier.label;
+  const hetznerCost = HETZNER_ORCHESTRATOR_COST + hetznerWorkerCost;
+  const backupCost = BACKUP_ENABLED ? hetznerCost * HETZNER_BACKUP_ADDON_RATIO : 0;
+
+  const appleDeveloperMonthly = APPLE_DEVELOPER_EUR_PER_YEAR / 12;
+  const domainMonthly = DOMAIN_EUR_HT_PER_YEAR / 12;
+
+  const recurringMonthlyCost = r2Cost + hetznerCost + backupCost + CLOUDFLARE_COST
+    + MOBILE_MAPS_COST + GEOCODING_COST + MODERATION_COST
+    + appleDeveloperMonthly + domainMonthly;
+
+  return {
+    mau, permanentUsers, freemiumUsers, totalStorageGB,
+    r2Cost, hetznerCost, hetznerWorkerCost, hetznerWorkerLabel, backupCost,
+    appleDeveloperMonthly, domainMonthly,
+    recurringMonthlyCost,
+  };
+}
+
+function renderCards(c) {
+  document.getElementById('summary-cards').innerHTML = `
+    <div class="cost-card highlight">
+      <div class="name">Total / mois</div>
+      <div class="amount">${fmtEur(c.recurringMonthlyCost)}</div>
+      <div class="sub">Récurrent, hors coûts ponctuels</div>
+    </div>
+    <div class="cost-card">
+      <div class="name">Par utilisateur</div>
+      <div class="amount">${fmt(c.recurringMonthlyCost / c.mau * 100, 2)} c€</div>
+      <div class="sub">centimes / MAU / mois</div>
+    </div>
+  `;
+}
+
+function renderBreakdown(c) {
+  const rows = [
+    { label: 'Hetzner — orchestrateur', color: '#888780', value: fmtEur(HETZNER_ORCHESTRATOR_COST), sub: 'CX23 · fixe, officiel' },
+    { label: 'Hetzner — worker', color: '#5C5C5C', value: fmtEur(c.hetznerWorkerCost), sub: c.hetznerWorkerLabel + ' · estimé' },
+    { label: 'Cloudflare R2 (stockage)', color: '#F79009', value: fmtEur(c.r2Cost), sub: fmt(c.totalStorageGB, 2) + ' Go stockés' },
+    { label: 'Backup DB', color: '#5DCAA5', value: c.backupCost === 0 ? '0 €' : fmtEur(c.backupCost), sub: BACKUP_ENABLED ? 'Add-on Hetzner (+20%)' : 'Désactivé — aucun backup confirmé' },
+    { label: 'Cloudflare (CDN)', color: '#F6821F', value: '0 €', sub: 'Plan Free' },
+    { label: 'Cartographie mobile', color: '#0027FA', value: '0 €', sub: 'Apple/Google Maps, natif' },
+    { label: 'Géocodage (IGN)', color: '#3B82F6', value: '0 €', sub: 'Géoplateforme, gratuit' },
+    { label: 'Modération OpenAI', color: '#10A37F', value: '0 €', sub: 'omni-moderation, gratuit' },
+    { label: 'Compte développeur Apple', color: '#A2AAAD', value: fmtEur(c.appleDeveloperMonthly), sub: '99 €/an, mensualisé' },
+    { label: 'Nom de domaine', color: '#004E64', value: fmtEur(c.domainMonthly), sub: '7,79 €/an HT (OVH), mensualisé' },
+    { label: 'TOTAL MENSUEL', color: 'transparent', value: fmtEur(c.recurringMonthlyCost) },
+  ];
+  document.getElementById('breakdown').innerHTML = rows.map(r =>
+    `<div class="breakdown-row">
+      <span class="label"><span class="dot" style="background:${r.color}"></span>${r.label}${r.sub ? ' <span class="sub-txt">· ' + r.sub + '</span>' : ''}</span>
+      <span class="value">${r.value}</span>
+    </div>`
+  ).join('');
+}
+
+function renderCostCurve(postsPerMonth, appAgeMonths, permanentRatioPct, pctPostsWithImage, imagesPerPost) {
+  const ctx = document.getElementById('cost-chart').getContext('2d');
+  const points = [500, 2000, 5000, 10000, 25000, 50000, 75000, 100000];
+
+  const costData = points.map(m =>
+    Math.round(calcModel(m, postsPerMonth, appAgeMonths, permanentRatioPct, pctPostsWithImage, imagesPerPost).recurringMonthlyCost)
+  );
+
+  if (costChart) costChart.destroy();
+  costChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: points.map(p => p >= 1000 ? (p/1000)+'K' : p),
+      datasets: [
+        { label: 'Coût infra mensuel', data: costData, borderColor: '#0027FA', backgroundColor: 'rgba(0,39,250,0.08)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 3 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10.5 } } },
+        y: { grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { font: { size: 10.5 } } }
+      }
+    }
+  });
+}
+
+// Champs "Contenu & rétention" : inputs libres, donc une valeur incohérente (vide, non
+// numérique, ou hors bornes) est possible. On la signale en rouge sur le champ ET on bloque
+// tout le simulateur (les résultats gèlent sur leur dernier état valide) tant qu'elle n'est
+// pas corrigée — plutôt que de calculer silencieusement avec une valeur absurde.
+function readAndValidate(id, min, max, rangeLabel) {
+  const el = document.getElementById(id);
+  const msgEl = document.getElementById(id.replace('-input', '-msg'));
+  const raw = el.value.trim();
+  const n = parseFloat(raw);
+  const valid = raw !== '' && Number.isFinite(n) && n >= min && n <= max;
+
+  el.classList.toggle('invalid', !valid);
+  if (msgEl) msgEl.textContent = valid ? '' : `Doit être entre ${rangeLabel}`;
+
+  return { valid, value: n };
+}
+
+function update() {
+  const mau = parseInt(document.getElementById('mau-slider').value);
+  document.getElementById('mau-display').textContent = mau.toLocaleString('fr-FR');
+  const tierPct = (mau - 500) / (100000 - 500) * 100;
+  document.getElementById('tier-fill').style.width = tierPct + '%';
+
+  const months = readAndValidate('months-input', 1, 24, '1 et 24');
+  const posts = readAndValidate('posts-input', 0.5, 6, '0,5 et 6');
+  const pctImage = readAndValidate('pct-image-input', 0, 100, '0 et 100');
+  const imagesPerPost = readAndValidate('images-per-post-input', 1, 5, '1 et 5');
+  const permanent = readAndValidate('permanent-input', 0, 30, '0 et 30');
+
+  const allValid = months.valid && posts.valid && pctImage.valid && imagesPerPost.valid && permanent.valid;
+  const banner = document.getElementById('validation-banner');
+  const colRight = document.getElementById('col-right');
+  banner.classList.toggle('show', !allValid);
+  colRight.classList.toggle('blocked', !allValid);
+
+  if (!allValid) return; // résultats gelés sur leur dernier état valide, pas de recalcul
+
+  const c = calcModel(mau, posts.value, months.value, permanent.value, pctImage.value, imagesPerPost.value);
+  renderCards(c);
+  renderBreakdown(c);
+  renderCostCurve(posts.value, months.value, permanent.value, pctImage.value, imagesPerPost.value);
+
+  document.getElementById('pricing-note').textContent = 'Tarifs vérifiés le ' + PRICING_CHECKED_ON.split('-').reverse().join('/') + ' — sources et liens dans les commentaires du code.';
+}
+
+['mau-slider', 'months-input', 'posts-input', 'pct-image-input', 'images-per-post-input', 'permanent-input']
+  .forEach(id => document.getElementById(id).addEventListener('input', update));
+
+update();
+</script>
+</body>
+</html>

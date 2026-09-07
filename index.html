@@ -35,14 +35,18 @@
 
 .validation-banner { display: none; background: #FFF5F5; border: 1px solid #F3B4B4; color: #B91C1C; font-size: 12.5px; padding: 9px 14px; border-radius: 8px; margin-bottom: 14px; }
 .validation-banner.show { display: block; }
-.col-right.blocked { opacity: 0.4; filter: grayscale(35%); pointer-events: none; transition: opacity .15s; }
+.col-right.blocked, .cost-grid.blocked { opacity: 0.4; filter: grayscale(35%); pointer-events: none; transition: opacity .15s; }
 
-.cost-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.field-row .field { margin-bottom: 0; }
 .cost-card { background: #f9f9fa; border-radius: 10px; padding: 12px 14px; border: 1px solid #eaeaea; }
 .cost-card .name { font-size: 10px; color: #888; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
 .cost-card .amount { font-size: 19px; font-weight: 600; color: #111; }
 .cost-card .sub { font-size: 10.5px; color: #666; margin-top: 2px; line-height: 1.3; }
 .cost-card.highlight { background: rgba(0, 39, 250, 0.04); border-color: #0027FA; }
+.cost-card.ok .amount { color: #3B6D11; }
+.cost-card.danger .amount { color: #A32D2D; }
 
 /* Barre de position MAU : purement décorative (pas un second curseur — voir #tier-fill). */
 .tier-bar { height: 4px; border-radius: 2px; background: #eaeaea; margin: 8px 0 6px; position: relative; overflow: hidden; }
@@ -60,7 +64,7 @@
 <body>
 <div class="sim-page">
   <h1 class="sim-title">Simulateur de coûts d'infrastructure — Derby</h1>
-  <div class="validation-banner" id="validation-banner">⚠️ Corrigez la ou les valeurs en rouge dans "Contenu &amp; rétention" pour remettre à jour le simulateur.</div>
+  <div class="validation-banner" id="validation-banner">⚠️ Corrigez la ou les valeurs en rouge pour remettre à jour le simulateur.</div>
 
   <div class="layout">
     <div class="col-left">
@@ -72,6 +76,25 @@
         </div>
         <div class="tier-bar"><div class="tier-fill" id="tier-fill"></div></div>
         <div class="tier-labels"><span>500</span><span>10K</span><span>25K</span><span>50K</span><span>100K</span></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Premium</div>
+        <div class="field-row">
+          <div class="field">
+            <label class="field-label" for="premium-price-input">Prix (€/mois)</label>
+            <input type="number" id="premium-price-input" class="num-input" min="0.99" max="29.99" step="0.5" value="3.99" inputmode="decimal">
+            <div class="field-msg" id="premium-price-msg"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="premium-ratio-input">% conversion</label>
+            <div class="input-wrap">
+              <input type="number" id="premium-ratio-input" class="num-input has-suffix" min="0" max="30" step="0.5" value="3" inputmode="decimal">
+              <span class="suffix">%</span>
+            </div>
+            <div class="field-msg" id="premium-ratio-msg"></div>
+          </div>
+        </div>
       </div>
 
       <div class="panel">
@@ -99,22 +122,14 @@
           <input type="number" id="images-per-post-input" class="num-input" min="1" max="5" step="1" value="2" inputmode="numeric">
           <div class="field-msg" id="images-per-post-msg"></div>
         </div>
-        <div class="field">
-          <label class="field-label" for="permanent-input">% au contenu permanent</label>
-          <div class="input-wrap">
-            <input type="number" id="permanent-input" class="num-input has-suffix" min="0" max="30" step="0.5" value="3" inputmode="decimal">
-            <span class="suffix">%</span>
-          </div>
-          <div class="field-msg" id="permanent-msg"></div>
-        </div>
       </div>
-
-      <div class="cost-grid" id="summary-cards"></div>
     </div>
 
     <div class="col-right" id="col-right">
+      <div class="cost-grid" id="summary-cards"></div>
+
       <div class="panel">
-        <div class="panel-title">Coût infra total selon l'échelle (MAU)</div>
+        <div class="panel-title">Coûts vs revenus nets Premium selon l'échelle (MAU)</div>
         <div style="position: relative; height: 180px;">
           <canvas id="cost-chart"></canvas>
         </div>
@@ -134,9 +149,13 @@
 <script>
 // ═══════════════════════════════════════════════════════════════════════
 // TARIFS PUBLICS — à mettre à jour ici quand les fournisseurs changent leurs
-// prix. Chaque constante porte sa source. Ce simulateur ne projette QUE des
-// coûts d'infrastructure à l'échelle, à partir de tarifs publics réels :
-// pas de coûts d'équipe, pas de suivi de dépenses passées, pas de revenus.
+// prix. Chaque constante porte sa source. Ce simulateur projette les coûts
+// d'infrastructure à l'échelle à partir de tarifs publics réels, et les
+// recoupe avec les revenus du modèle Premium (prix × taux de conversion,
+// moins la commission des stores) pour repérer le seuil de rentabilité.
+// Toujours aucun coût d'équipe, aucune valorisation jours-homme, aucun suivi
+// de dépense réelle passée — uniquement des coûts et revenus PROJETÉS à
+// partir d'hypothèses d'échelle et de tarifs publics.
 // ═══════════════════════════════════════════════════════════════════════
 
 const PRICING_CHECKED_ON = '2026-09-07';
@@ -248,6 +267,23 @@ const APPLE_DEVELOPER_EUR_PER_YEAR = 99;
 // Source: https://www.ovhcloud.com/fr/domains/ (prix HT)
 const DOMAIN_EUR_HT_PER_YEAR = 7.79;
 
+// ─── Commission des stores sur les revenus Premium (Apple + Google) ───────
+// Apple : App Store Small Business Program = 15% de commission (au lieu de
+// 30%) pour les développeurs sous 1M$/an de revenus nets — stable depuis 2021.
+// Source : https://developer.apple.com/app-store/small-business-program/
+//
+// Google Play : depuis le 30/06/2026 (EEE/UK/US), l'ancien forfait "15% sous
+// 1M$/an" est scindé en 10% de frais de service + 5% de frais de facturation
+// Google Play (si vous utilisez leur système de paiement intégré — ce frais de
+// facturation tombe à 0% avec un système de paiement alternatif, mais un autre
+// taux de service s'applique alors). Source :
+// https://support.google.com/googleplay/android-developer/answer/10632485
+//
+// Hypothèse retenue : commission moyenne de 15% sur les deux plateformes (cas
+// standard, sous 1M$/an, paiement via le système natif de chaque store). À
+// ajuster si vous dépassez ce seuil ou changez de mode de paiement.
+const STORE_COMMISSION_PCT = 0.15;
+
 // ─── Hypothèses de volumétrie (PAS des tarifs — tailles moyennes à ajuster
 // si besoin, indépendantes des prix fournisseurs ci-dessus) ────────────────
 const PHOTO_PROFILE_KB = 150;
@@ -260,8 +296,8 @@ let costChart = null;
 function fmt(n, dec=2) { return n.toFixed(dec).replace('.', ','); }
 function fmtEur(n) { return (n < 1 ? fmt(n) : Math.round(n).toLocaleString('fr-FR')) + ' €'; }
 
-function calcModel(mau, postsPerMonth, appAgeMonths, permanentRatioPct, pctPostsWithImage, imagesPerPost) {
-  const permanentRatio = permanentRatioPct / 100;
+function calcModel(mau, postsPerMonth, appAgeMonths, premiumRatioPct, pctPostsWithImage, imagesPerPost, premiumPrice) {
+  const premiumRatio = premiumRatioPct / 100;
   const avgImagesPerPost = (pctPostsWithImage / 100) * imagesPerPost;
 
   // ── Stockage ──
@@ -269,20 +305,23 @@ function calcModel(mau, postsPerMonth, appAgeMonths, permanentRatioPct, pctPosts
   const storageDbGB = (mau * (DB_BASE_KB + DB_GROWTH_KB * appAgeMonths)) / (1024 * 1024);
   const monthlyPostVolPerUserGB = (postsPerMonth * avgImagesPerPost * PHOTO_POST_KB) / (1024 * 1024);
 
-  const permanentUsers = Math.round(mau * permanentRatio);
-  const freemiumUsers = mau - permanentUsers;
+  // Les abonnés Premium sont la même population que les utilisateurs au
+  // contenu permanent : payer Premium, c'est ce qui exempte leurs posts de
+  // la suppression à 30 jours (voir règle produit ci-dessous).
+  const premiumUsers = Math.round(mau * premiumRatio);
+  const freemiumUsers = mau - premiumUsers;
 
   // Règle produit : les posts (et leurs images) des utilisateurs freemium sont
   // supprimés automatiquement au bout d'un mois → fenêtre glissante de 30 jours,
-  // jamais une accumulation infinie. Les utilisateurs au contenu permanent,
-  // eux, accumulent leurs posts sans expiration.
+  // jamais une accumulation infinie. Les abonnés Premium, eux, accumulent
+  // leurs posts sans expiration.
   const freemiumPostsGB = freemiumUsers * monthlyPostVolPerUserGB * Math.min(appAgeMonths, 1);
-  const permanentPostsGB = permanentUsers * monthlyPostVolPerUserGB * appAgeMonths;
-  const storagePostsGB = freemiumPostsGB + permanentPostsGB;
+  const premiumPostsGB = premiumUsers * monthlyPostVolPerUserGB * appAgeMonths;
+  const storagePostsGB = freemiumPostsGB + premiumPostsGB;
 
   const totalStorageGB = storageProfileGB + storagePostsGB + storageDbGB;
 
-  // ── Coûts ──
+  // ── Coûts d'infra ──
   const r2Cost = totalStorageGB * R2_STORAGE_PER_GB;
   const workerTier = HETZNER_WORKER.find(h => mau <= h.max) || HETZNER_WORKER[HETZNER_WORKER.length - 1];
   const hetznerWorkerCost = workerTier.cost;
@@ -297,25 +336,44 @@ function calcModel(mau, postsPerMonth, appAgeMonths, permanentRatioPct, pctPosts
     + MOBILE_MAPS_COST + GEOCODING_COST + MODERATION_COST
     + appleDeveloperMonthly + domainMonthly;
 
+  // ── Revenus Premium ──
+  const grossRevenue = premiumUsers * premiumPrice;
+  const storeFees = grossRevenue * STORE_COMMISSION_PCT;
+  const netRevenue = grossRevenue - storeFees;
+  const profit = netRevenue - recurringMonthlyCost;
+
   return {
-    mau, permanentUsers, freemiumUsers, totalStorageGB,
+    mau, premiumUsers, freemiumUsers, totalStorageGB,
     r2Cost, hetznerCost, hetznerWorkerCost, hetznerWorkerLabel, backupCost,
     appleDeveloperMonthly, domainMonthly,
     recurringMonthlyCost,
+    grossRevenue, storeFees, netRevenue, profit,
   };
 }
 
 function renderCards(c) {
+  const profitClass = c.profit >= 0 ? 'ok' : 'danger';
+  const sign = c.profit > 0 ? '+' : '';
   document.getElementById('summary-cards').innerHTML = `
     <div class="cost-card highlight">
-      <div class="name">Total / mois</div>
+      <div class="name">Coût infra / mois</div>
       <div class="amount">${fmtEur(c.recurringMonthlyCost)}</div>
       <div class="sub">Récurrent, hors coûts ponctuels</div>
     </div>
     <div class="cost-card">
-      <div class="name">Par utilisateur</div>
+      <div class="name">Coût par utilisateur</div>
       <div class="amount">${fmt(c.recurringMonthlyCost / c.mau * 100, 2)} c€</div>
       <div class="sub">centimes / MAU / mois</div>
+    </div>
+    <div class="cost-card">
+      <div class="name">Revenus nets Premium</div>
+      <div class="amount">${fmtEur(c.netRevenue)}</div>
+      <div class="sub">${c.premiumUsers.toLocaleString('fr-FR')} abonnés, après commission store</div>
+    </div>
+    <div class="cost-card ${profitClass}">
+      <div class="name">Bénéfice / perte</div>
+      <div class="amount">${sign}${fmtEur(c.profit)}</div>
+      <div class="sub">${c.profit >= 0 ? "Le Premium finance l'infra" : "Revenus Premium insuffisants"}</div>
     </div>
   `;
 }
@@ -342,13 +400,13 @@ function renderBreakdown(c) {
   ).join('');
 }
 
-function renderCostCurve(postsPerMonth, appAgeMonths, permanentRatioPct, pctPostsWithImage, imagesPerPost) {
+function renderCostCurve(postsPerMonth, appAgeMonths, premiumRatioPct, pctPostsWithImage, imagesPerPost, premiumPrice) {
   const ctx = document.getElementById('cost-chart').getContext('2d');
   const points = [500, 2000, 5000, 10000, 25000, 50000, 75000, 100000];
 
-  const costData = points.map(m =>
-    Math.round(calcModel(m, postsPerMonth, appAgeMonths, permanentRatioPct, pctPostsWithImage, imagesPerPost).recurringMonthlyCost)
-  );
+  const models = points.map(m => calcModel(m, postsPerMonth, appAgeMonths, premiumRatioPct, pctPostsWithImage, imagesPerPost, premiumPrice));
+  const costData = models.map(c => Math.round(c.recurringMonthlyCost));
+  const revenueData = models.map(c => Math.round(c.netRevenue));
 
   if (costChart) costChart.destroy();
   costChart = new Chart(ctx, {
@@ -356,12 +414,13 @@ function renderCostCurve(postsPerMonth, appAgeMonths, permanentRatioPct, pctPost
     data: {
       labels: points.map(p => p >= 1000 ? (p/1000)+'K' : p),
       datasets: [
-        { label: 'Coût infra mensuel', data: costData, borderColor: '#0027FA', backgroundColor: 'rgba(0,39,250,0.08)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 3 }
+        { label: 'Coût infra', data: costData, borderColor: '#0027FA', backgroundColor: 'rgba(0,39,250,0.08)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 3 },
+        { label: 'Revenus nets Premium', data: revenueData, borderColor: '#3B6D11', backgroundColor: 'rgba(59,109,17,0.08)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 3 }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, font: { size: 10.5 } } } },
       scales: {
         x: { grid: { display: false }, ticks: { font: { size: 10.5 } } },
         y: { grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { font: { size: 10.5 } } }
@@ -397,25 +456,26 @@ function update() {
   const posts = readAndValidate('posts-input', 0.5, 6, '0,5 et 6');
   const pctImage = readAndValidate('pct-image-input', 0, 100, '0 et 100');
   const imagesPerPost = readAndValidate('images-per-post-input', 1, 5, '1 et 5');
-  const permanent = readAndValidate('permanent-input', 0, 30, '0 et 30');
+  const premiumPrice = readAndValidate('premium-price-input', 0.99, 29.99, '0,99 et 29,99');
+  const premiumRatio = readAndValidate('premium-ratio-input', 0, 30, '0 et 30');
 
-  const allValid = months.valid && posts.valid && pctImage.valid && imagesPerPost.valid && permanent.valid;
+  const allValid = months.valid && posts.valid && pctImage.valid && imagesPerPost.valid && premiumPrice.valid && premiumRatio.valid;
   const banner = document.getElementById('validation-banner');
   const colRight = document.getElementById('col-right');
   banner.classList.toggle('show', !allValid);
-  colRight.classList.toggle('blocked', !allValid);
+  colRight.classList.toggle('blocked', !allValid); // summary-cards vit maintenant dans col-right, donc couvert aussi
 
   if (!allValid) return; // résultats gelés sur leur dernier état valide, pas de recalcul
 
-  const c = calcModel(mau, posts.value, months.value, permanent.value, pctImage.value, imagesPerPost.value);
+  const c = calcModel(mau, posts.value, months.value, premiumRatio.value, pctImage.value, imagesPerPost.value, premiumPrice.value);
   renderCards(c);
   renderBreakdown(c);
-  renderCostCurve(posts.value, months.value, permanent.value, pctImage.value, imagesPerPost.value);
+  renderCostCurve(posts.value, months.value, premiumRatio.value, pctImage.value, imagesPerPost.value, premiumPrice.value);
 
   document.getElementById('pricing-note').textContent = 'Tarifs vérifiés le ' + PRICING_CHECKED_ON.split('-').reverse().join('/') + ' — sources et liens dans les commentaires du code.';
 }
 
-['mau-slider', 'months-input', 'posts-input', 'pct-image-input', 'images-per-post-input', 'permanent-input']
+['mau-slider', 'months-input', 'posts-input', 'pct-image-input', 'images-per-post-input', 'premium-price-input', 'premium-ratio-input']
   .forEach(id => document.getElementById(id).addEventListener('input', update));
 
 update();
